@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+
+  # ── SERVICE 1: MongoDB Database ──
+  mongodb:
+    image: mongo:6.0          # Official MongoDB image from Docker Hub
+    container_name: todo-mongodb
+    ports:
+      - "27017:27017"         # host:container (lets you connect with Compass)
+    volumes:
+      - mongodb_data:/data/db # Persist data even if container stops
+    networks:
+      - todo-network
+
+  # ── SERVICE 2: FastAPI Backend ──
+  backend:
+    build: ./backend          # Build using backend/Dockerfile
+    container_name: todo-backend
+    ports:
+      - "8000:8000"           # host:container
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017  # 'mongodb' = service name above!
+      - PORT=8000
+    depends_on:
+      - mongodb               # Start mongodb BEFORE backend
+    networks:
+      - todo-network
+
+  # ── SERVICE 3: React Frontend ──
+  frontend:
+    build: ./frontend         
+    container_name: todo-frontend
+    ports:
+      - "3000:80"             
+    depends_on:
+      - backend               
+    networks:
+      - todo-network
+
+# ── Named Volume (persists MongoDB data) ──
+volumes:
+  mongodb_data:               
+
+# ── Private Network (containers talk to each other) ──
+networks:
+  todo-network:
+    driver: bridge

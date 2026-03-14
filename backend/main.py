@@ -1,10 +1,13 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import json
+from motor.motor_asyncio import AsyncIOMotorClient
+from bson import ObjectId
+from dotenv import load_dotenv
 import os
 import time
-import uuid
+
+load_dotenv()
 
 app = FastAPI(title="DevOps Todo API", version="1.0.0")
 
@@ -16,24 +19,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── File-based storage (temporary until Docker phase) ──
-DB_FILE = "todos.json"
+# ── MongoDB Connection ──
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+client     = AsyncIOMotorClient(MONGO_URI)
+db         = client.tododb
+collection = db.todos
 
-def read_db():
-    if not os.path.exists(DB_FILE):
-        return []
-    with open(DB_FILE, "r") as f:
-        return json.load(f)
-
-def write_db(todos):
-    with open(DB_FILE, "w") as f:
-        json.dump(todos, f, indent=2)
-
-# ── Pydantic models ──
+# ── Models ──
 class TodoCreate(BaseModel):
     task: str
 
-# ── Health check ──
+# ── Helper ──
+def serialize(todo) -> dict:
+    return {
+        "id":        str(todo["_id"]),
+        "task":      todo["task"],
+        "completed": todo.get("completed", False),
+        "createdAt": todo.get("createdAt", "")
+    }
+
+# ── Health Check ──
 @app.get("/health")
 async def health():
     return {"status": "ok", "uptime": time.time()}
@@ -41,47 +46,40 @@ async def health():
 # ── GET all todos ──
 @app.get("/api/todos")
 async def get_todos():
-    todos = read_db()
-    return todos
+    try:
+        todos = await collection.find().sort("_id", -1).to_list(100)
+        return [serialize(t) for t in todos]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ── POST create todo ──
 @app.post("/api/todos", status_code=201)
 async def create_todo(todo: TodoCreate):
     if not todo.task.strip():
         raise HTTPException(status_code=400, detail="Task cannot be empty")
-    todos = read_db()
-    new_todo = {
-        "id":        str(uuid.uuid4()),
-        "task":      todo.task,
-        "completed": False,
-        "createdAt": str(time.time())
-    }
-    todos.append(new_todo)
-    write_db(todos)
-    return new_todo
+    doc = {"task": todo.task, "completed": False, "createdAt": str(time.time())}
+    result = await collection.insert_one(doc)
+    doc["_id"] = result.inserted_id
+    return serialize(doc)
 
-# ── PATCH toggle complete ──
+# ── PATCH toggle ──
 @app.patch("/api/todos/{todo_id}")
 async def toggle_todo(todo_id: str):
-    todos = read_db()
-    for todo in todos:
-        if todo["id"] == todo_id:
-            todo["completed"] = not todo["completed"]
-            write_db(todos)
-            return todo
-    raise HTTPException(status_code=404, detail="Todo not found")
+    todo = await collection.find_one({"_id": ObjectId(todo_id)})
+    if not todo:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    new_status = not todo.get("completed", False)
+    await collection.update_one(
+        {"_id": ObjectId(todo_id)},
+        {"$set": {"completed": new_status}}
+    )
+    todo["completed"] = new_status
+    return serialize(todo)
 
 # ── DELETE todo ──
 @app.delete("/api/todos/{todo_id}")
 async def delete_todo(todo_id: str):
-    todos = read_db()
-    filtered = [t for t in todos if t["id"] != todo_id]
-    if len(filtered) == len(todos):
+    result = await collection.delete_one({"_id": ObjectId(todo_id)})
+    if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Todo not found")
-    write_db(filtered)
     return {"message": "Deleted successfully"}
-
-
-
-
-
