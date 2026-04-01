@@ -4,12 +4,16 @@ from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 from dotenv import load_dotenv
+from prometheus_fastapi_instrumentator import Instrumentator
 import os
 import time
+import psutil
 
 load_dotenv()
 
 app = FastAPI(title="DevOps Todo API", version="1.0.0")
+# ── Prometheus metrics ──
+Instrumentator().instrument(app).expose(app)
 
 # ── CORS ──
 app.add_middleware(

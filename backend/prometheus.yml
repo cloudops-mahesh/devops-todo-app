@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s      # collect metrics every 15 seconds
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Scrape our FastAPI backend
+  - job_name: 'fastapi-backend'
+    static_configs:
+      - targets: ['backend:8000']
+    metrics_path: '/metrics'
+
+  # Scrape Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
